@@ -17,7 +17,7 @@ class RelativePositionBias(nn.Module):
             maximum relative distance represented by a distinct bias value
     """
 
-    def __init__(self, max_distance: int = 128):
+    def __init__(self, max_distance: int):
         super().__init__()
 
         self.max_distance = max_distance
@@ -71,10 +71,10 @@ class HSTUBlock(nn.Module):
     def __init__(
         self,
         d_model: int,
-        num_heads: int = 4,
-        qk_dim: int = 32,
-        value_dim: int = 64,
-        max_distance: int = 128,
+        num_heads: int,
+        qk_dim: int,
+        value_dim: int,
+        max_distance: int,
         dropout: float = 0.1,
     ):
         super().__init__()

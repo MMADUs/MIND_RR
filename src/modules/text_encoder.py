@@ -18,20 +18,25 @@ def get_hf_tokenizer_embeddings(
     Args:
         model_name:
             hugging Face model name containing the pretrained tokenizer
-            and embedding weights.
+            and embedding weights
+
+    Returns:
+        embedding_weights:
+            pretrained token embedding matrix with shape `(vocab_size, embedding_dim)`
+        embedding_dim:
+            dimension of each token embedding vector
+        tokenizer:
+            tokenizer corresponding to the pretrained embedding vocabulary
     """
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     model = AutoModel.from_pretrained(model_name)
 
-    embedding_weights = (
-        model.get_input_embeddings()
-        .weight
-        .detach()
-        .clone()
-    )
+    embedding_weights = model.get_input_embeddings().weight.detach().clone()
 
-    return embedding_weights, tokenizer
+    embedding_dim = embedding_weights.shape[1]
+
+    return embedding_weights, embedding_dim, tokenizer
 
 
 class TextEncoder(nn.Module):
@@ -69,8 +74,8 @@ class TextEncoder(nn.Module):
         embedding_dim: int,
         embedding_weights: torch.Tensor | None,
         d_model: int,
-        num_heads: int = 4,
-        pool_hidden_dim: int = 128,
+        num_heads: int,
+        pool_hidden_dim: int,
         dropout: float = 0.1,
         freeze_pretrained_embedding: bool = True,
     ):

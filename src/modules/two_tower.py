@@ -22,8 +22,22 @@ class NewsEncoder(nn.Module):
     in order to enable entity encoding
 
     Args:
+        d_model:
+            dimension of the final news representation
+        num_heads:
+            number of attention heads used by the text encoder
+        pool_hidden_dim:
+            hidden dimension used by additive attention pooling
         vocab_size:
             number of tokens in the text vocabulary
+        text_embedding_dim:
+            dimension of the input token embeddings
+        text_embedding_weights:
+            optional pretrained token embedding matrix
+        entity_embedding_dim:
+            optional dimension of the entity embeddings
+        entity_embedding_weights:
+            optional pretrained entity embedding weights from .vec file
         category_vocab_size:
             number of categories in the category vocabulary
         category_embedding_dim:
@@ -32,38 +46,24 @@ class NewsEncoder(nn.Module):
             number of subcategories in the subcategory vocabulary
         subcategory_embedding_dim:
             dimension of the subcategory embedding
-        entity_embedding_dim:
-            optional dimension of the entity embeddings
-        entity_embedding_weights:
-            optional pretrained entity embedding weights from .vec file
-        text_embedding_dim:
-            dimension of the input token embeddings
-        text_embedding_weights:
-            optional pretrained token embedding matrix
-        d_model:
-            dimension of the final news representation
-        num_heads:
-            number of attention heads used by the text encoder
-        pool_hidden_dim:
-            hidden dimension used by additive attention pooling
         dropout:
             dropout probability
     """
 
     def __init__(
         self,
+        d_model: int,
+        num_heads: int,
+        pool_hidden_dim: int,
         vocab_size: int,
+        text_embedding_dim: int,
+        text_embedding_weights: torch.Tensor | None,
+        entity_embedding_dim: int | None,
+        entity_embedding_weights: torch.Tensor | None,
         category_vocab_size: int,
         category_embedding_dim: int,
         subcategory_vocab_size: int,
         subcategory_embedding_dim: int,
-        entity_embedding_dim: int | None,
-        entity_embedding_weights: torch.Tensor | None,
-        text_embedding_dim: int,
-        text_embedding_weights: torch.Tensor | None,
-        d_model: int = 256,
-        num_heads: int = 4,
-        pool_hidden_dim: int = 128,
         dropout: float = 0.1,
     ):
         super().__init__()
@@ -176,12 +176,12 @@ class UserEncoder(nn.Module):
 
     def __init__(
         self,
-        d_model: int = 256,
-        num_layers: int = 4,
-        num_heads: int = 4,
-        qk_dim: int = 64,
-        value_dim: int = 64,
-        max_distance: int = 128,
+        d_model: int,
+        num_layers: int,
+        num_heads: int,
+        qk_dim: int,
+        value_dim: int,
+        max_distance: int,
         dropout: float = 0.1,
     ):
         super().__init__()

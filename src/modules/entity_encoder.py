@@ -94,7 +94,7 @@ class EntityEncoder(nn.Module):
         embedding_dim: int,
         embedding_weights: torch.Tensor | None,
         d_model: int,
-        pool_hidden_dim: int = 128,
+        pool_hidden_dim: int,
         dropout: float = 0.1,
         freeze_pretrained_embedding: bool = True,
     ):
