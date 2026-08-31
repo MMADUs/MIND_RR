@@ -10,7 +10,7 @@ import torch.nn as nn
 from src.modules.attention import AdditiveAttention
 
 
-def build_entity_embeddings() -> tuple[torch.Tensor, int, dict[str, int]]:
+def build_entity_embeddings(vec_path: str | Path) -> tuple[torch.Tensor, int, dict[str, int]]:
     """
     Load pretrained MIND entity embeddings and build the entity vocab from .vec file
 
@@ -27,7 +27,6 @@ def build_entity_embeddings() -> tuple[torch.Tensor, int, dict[str, int]]:
             mapping from MIND entity IDs to their corresponding embedding
             indices. Includes `<PAD>` at index `0` and `<UNK>` at index `1`
     """
-    vec_path = Path("./data/MIND/entity_embedding.vec")
     embedding_dim = 100
 
     entity_vocab = {
@@ -70,12 +69,16 @@ def build_entity_embeddings() -> tuple[torch.Tensor, int, dict[str, int]]:
 
 class EntityEncoder(nn.Module):
     """
-    Encode a sequence of news entities into a single dense representation.
+    Encode a sequence of news entities into a single dense representation
 
     The encoder maps entity IDs to pretrained entity embeddings, projects them
-    into `d_model` and aggregates the entity sequence using additive attention pooling.
+    into `d_model` and aggregates the entity sequence using additive attention pooling
 
     Args:
+        embedding_dim:
+            dimension of the input entity embeddings
+        embedding_weights:
+            pretrained entity embedding matrix from the official MIND dataset
         d_model:
             dimension of the projected entity representations and final encoded
             entity representation
@@ -92,7 +95,7 @@ class EntityEncoder(nn.Module):
     def __init__(
         self,
         embedding_dim: int,
-        embedding_weights: torch.Tensor | None,
+        embedding_weights: torch.Tensor,
         d_model: int,
         pool_hidden_dim: int,
         dropout: float = 0.1,
@@ -105,7 +108,12 @@ class EntityEncoder(nn.Module):
             freeze=freeze_pretrained_embedding,
             padding_idx=0,
         )
-        self.projection = nn.Linear(embedding_dim, d_model)
+        self.projection = nn.Sequential(
+            nn.Linear(embedding_dim, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
         self.pooling = AdditiveAttention(d_model, pool_hidden_dim)
 
@@ -114,14 +122,13 @@ class EntityEncoder(nn.Module):
 
         valid_mask = entity_ids != 0
 
-        assert valid_mask.any(dim=1).all(), "found news with no valid entity"
-
         x = self.embedding(entity_ids)
         # (batch_size, entity_len) -> (batch_size, entity_len, embedding_dim)
 
         x = self.projection(x)
         # (batch_size, entity_len, embedding_dim) -> (batch_size, entity_len, d_model)
 
+        x = self.norm(x)
         x = self.dropout(x)
         x = self.pooling(x, valid_mask)
         # (batch_size, entity_len, d_model) -> (batch_size, d_model)

@@ -7,8 +7,7 @@ import torch.nn.functional as F
 
 from src.modules.text_encoder import TextEncoder
 from src.modules.entity_encoder import EntityEncoder
-from src.modules.attention import AdditiveAttention
-from src.modules.hstu_block import HSTUBlock
+from src.modules.attention import AdditiveAttention, TransformerBlock
 
 
 class NewsEncoder(nn.Module):
@@ -26,6 +25,10 @@ class NewsEncoder(nn.Module):
             dimension of the final news representation
         num_heads:
             number of attention heads used by the text encoder
+        num_layers:
+            number of repeated transformer block
+        d_ff:
+            dimension of the feed-forward network followed after MHA
         pool_hidden_dim:
             hidden dimension used by additive attention pooling
         vocab_size:
@@ -54,6 +57,8 @@ class NewsEncoder(nn.Module):
         self,
         d_model: int,
         num_heads: int,
+        num_layers: int,
+        d_ff: int,
         pool_hidden_dim: int,
         vocab_size: int,
         text_embedding_dim: int,
@@ -74,6 +79,8 @@ class NewsEncoder(nn.Module):
             embedding_weights=text_embedding_weights,
             d_model=d_model,
             num_heads=num_heads,
+            num_layers=num_layers,
+            d_ff=d_ff,
             pool_hidden_dim=pool_hidden_dim,
             dropout=dropout,
         )
@@ -91,7 +98,7 @@ class NewsEncoder(nn.Module):
         self.cat_projection = nn.Linear(category_embedding_dim, d_model)
         self.subcat_projection = nn.Linear(subcategory_embedding_dim, d_model)
 
-        if entity_embedding_dim and entity_embedding_weights:
+        if entity_embedding_dim is not None and entity_embedding_weights is not None:
             self.entity_encoder = EntityEncoder(
                 embedding_dim=entity_embedding_dim,
                 embedding_weights=entity_embedding_weights,
@@ -152,7 +159,7 @@ class UserEncoder(nn.Module):
     """
     Encode a user's news consumption history into a single user representation
 
-    The encoder applies stacked HSTU blocks over the sequence of historical
+    The encoder applies stacked transformer blocks over the sequence of historical
     news representations
 
     Args:
@@ -160,16 +167,11 @@ class UserEncoder(nn.Module):
             dimension of each news representation and the resulting user
             representation
         num_layers:
-            number of stacked HSTU blocks
+            number of repeated transformer block
         num_heads:
-            number of attention heads in each HSTU block
-        qk_dim:
-            dimension of the query and key vectors for each attention head
-        value_dim:
-            dimension of the value vector for each attention head
-        max_distance:
-            maximum relative position distance represented by the HSTU
-            positional bias
+            number of attention heads used by the text encoder
+        d_ff:
+            dimension of the feed-forward network followed after MHA
         dropout:
             dropout probability
     """
@@ -179,34 +181,50 @@ class UserEncoder(nn.Module):
         d_model: int,
         num_layers: int,
         num_heads: int,
-        qk_dim: int,
-        value_dim: int,
-        max_distance: int,
+        d_ff: int,
         dropout: float = 0.1,
     ):
         super().__init__()
 
         self.layers = nn.ModuleList(
             [
-                HSTUBlock(
-                    d_model=d_model,
-                    num_heads=num_heads,
-                    qk_dim=qk_dim,
-                    value_dim=value_dim,
-                    max_distance=max_distance,
-                    dropout=dropout,
-                )
+                TransformerBlock(d_model, num_heads, d_ff, dropout)
                 for _ in range(num_layers)
             ]
         )
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = nn.RMSNorm(d_model)
+
+    @staticmethod
+    def _build_causal_mask(valid_mask: torch.Tensor) -> torch.Tensor:
+        # valid_mask: (batch, seq_len)
+        _, seq_len = valid_mask.shape
+        device = valid_mask.device
+
+        # causal: position i can attend to positions <= i
+        causal = torch.tril(
+            torch.ones(seq_len, seq_len, dtype=torch.bool, device=device)
+        )
+        # causal: (seq_len, seq_len)
+
+        causal = causal[None, None, :, :]
+        # (1, 1, seq_len, seq_len)
+
+        pad = valid_mask[:, None, None, :]
+        # (batch, 1, 1, seq_len) -- masks out padded key positions
+
+        return causal & pad
+        # (batch, 1, seq_len, seq_len)
 
     def forward(self, history: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
         x = history
         # x: (batch, history_len, d_model)
+        # valid_mask: (batch, history_len)
+
+        attn_mask = self._build_causal_mask(valid_mask)
+        # (batch, 1, history_len, history_len)
 
         for layer in self.layers:
-            x = layer(x, valid_mask)
+            x = layer(x, attn_mask)
         # (batch, history_len, d_model)
 
         x = self.norm(x)
