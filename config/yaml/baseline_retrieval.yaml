@@ -1,0 +1,47 @@
+# Copyright 2026 Muhammad Nizwa
+# SPDX-License-Identifier: Apache-2.0
+
+output_dir: ".output"
+ckpt_basename: "{}_best"
+ckpt_format: ".pt"
+
+random_seed: 42
+
+data:
+  num_workers: 0
+  pin_memory: true
+  non_blocking: true
+  max_title_len: 32
+  max_abstract_len: 64
+  max_entities: 10
+  max_history: 50
+  num_negatives: 4
+
+two_tower:
+  batch_size: 64
+  epochs: 20
+  lr: 0.0001
+  weight_decay: 0.01
+  grad_clip: 1.0
+  early_stop_patience: 3
+  normalize_embeddings: false
+
+  news_tower:
+    d_model: 256
+    num_heads: 8
+    num_layers: 2
+    d_ff: 1024
+    pool_hidden_dim: 128
+    text_embedding_dim: null
+    use_pretrained_embedding: true
+    use_entity_embedding: true
+    category_embedding_dim: 64
+    subcategory_embedding_dim: 64
+    dropout: 0.1
+
+  user_tower:
+    d_model: 256
+    num_heads: 8
+    num_layers: 2
+    d_ff: 1024
+    dropout: 0.1
