@@ -79,5 +79,4 @@ def compute_ranking_metrics(
         "auc": compute_auc(scores, labels),
         "mrr": compute_mrr(scores, labels),
         "ndcg@5": compute_ndcg(scores, labels, k=5),
-        "ndcg@10": compute_ndcg(scores, labels, k=10),
     }

@@ -50,6 +50,8 @@ class DataConfig:
     num_workers: int
     pin_memory: bool
     non_blocking: bool
+    max_train_rows: int 
+    max_val_rows: int | None
     max_title_len: int 
     max_abstract_len: int 
     max_entities: int 
@@ -64,6 +66,7 @@ class NewsTowerConfig:
     num_layers: int
     d_ff: int
     pool_hidden_dim: int
+    hf_pretrained_model_name: str
     text_embedding_dim: int | None
     use_pretrained_embedding: bool
     use_entity_embedding: bool

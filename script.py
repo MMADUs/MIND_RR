@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import argparse
+import logging
+
+import numpy as np
 
 from torch.utils.data import DataLoader, Subset
 
@@ -12,28 +15,26 @@ from src.modules import (
 )
 from src.database import NewsDatabase
 from src.dataset import build_ds
-from src.utils import DeviceDataLoader, PROJECT_ROOT
+from src.utils import DeviceDataLoader, PROJECT_ROOT, count_parameters
 from src.trainer import Trainer
 from config import load_config, Config
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
+logger = logging.getLogger(__name__)
 
 N_TEST_SAMPLES = 500
 
 
-class CustomSubset(Subset):
-    def labels(self):
-        labels = []
-
-        for idx in self.indices:
-            sample_idx, _ = self.dataset._index[idx]
-            labels.append(self.dataset.samples[sample_idx]["label_path"])
-
-        return labels
-
-
 def main():
-    config = load_config(Config, (PROJECT_ROOT / "config" / "yaml" / "baseline_retrieval.yaml"))
+    logger.info("reading configuration file")
 
-    print(f"{config}")
+    config = load_config(
+        Config, (PROJECT_ROOT / "config" / "yaml" / "baseline_retrieval.yaml")
+    )
 
     parser = argparse.ArgumentParser(description="trainer script arg parser")
 
@@ -56,9 +57,12 @@ def main():
     train_path = PROJECT_ROOT / ".dataset" / "train"
     val_path = PROJECT_ROOT / ".dataset" / "validation"
 
+    hf_model_name = config.two_tower.news_tower.hf_pretrained_model_name
+
     if config.two_tower.news_tower.use_pretrained_embedding:
+        logger.info("loading pretrained embedding and tokenizer from %s", hf_model_name)
         text_embedding_weights, text_embedding_dim, tokenizer = (
-            get_hf_tokenizer_embeddings()
+            get_hf_tokenizer_embeddings(model_name=hf_model_name)
         )
     else:
         # TODO: make own tokenizer
@@ -67,12 +71,17 @@ def main():
         tokenizer = ...
         pass
 
+    vec_path = train_path / "entity_embedding.vec"
+
     if config.two_tower.news_tower.use_entity_embedding:
+        logger.info("loading pretrained entity embedding from %s", vec_path)
         entity_embedding_weights, entity_embedding_dim, entity_vocab = (
-            build_entity_embeddings(vec_path=(train_path / "entity_embedding.vec"))
+            build_entity_embeddings(vec_path=vec_path)
         )
     else:
         entity_embedding_weights, entity_embedding_dim, entity_vocab = None, None, None
+
+    logger.info("building news data lookup table")
 
     news_db = NewsDatabase(
         news_paths=[(train_path / "news.tsv"), (val_path / "news.tsv")],
@@ -90,14 +99,16 @@ def main():
     max_history = config.data.max_history
     num_negatives = config.data.num_negatives
 
-    train_ds = build_ds(
+    logger.info("building behavior dataset (train + validation)")
+
+    train_ds, len_train = build_ds(
         news_id_to_idx,
         news_data,
         behaviors_path=(train_path / "behaviors.tsv"),
         max_history=max_history,
         num_negatives=num_negatives,
     )
-    val_ds = build_ds(
+    val_ds, len_val = build_ds(
         news_id_to_idx,
         news_data,
         behaviors_path=(val_path / "behaviors.tsv"),
@@ -105,9 +116,48 @@ def main():
         num_negatives=num_negatives,
     )
 
+    logger.info(
+        "total trainng behavior: %d rows | total validation behavior: %d rows",
+        len_train,
+        len_val,
+    )
+
     if args.test:
-        train_ds = CustomSubset(train_ds, list(range(N_TEST_SAMPLES)))
-        val_ds = CustomSubset(val_ds, list(range(N_TEST_SAMPLES // 4)))
+        # tiny deterministic smoke test
+        train_ds = Subset(train_ds, range(min(N_TEST_SAMPLES, len(train_ds))))
+        val_ds = Subset(val_ds, range(min(N_TEST_SAMPLES // 4, len(val_ds))))
+
+        logger.info(
+            "test mode: using %d training rows | %d validation rows",
+            len(train_ds),
+            len(val_ds),
+        )
+    else:
+        # normal experiment: randomly sample according to config
+        rng = np.random.default_rng(config.random_seed)
+
+        max_train_rows = config.data.max_train_rows
+        max_val_rows = config.data.max_val_rows
+
+        # training subset
+        if max_train_rows is not None and max_train_rows < len(train_ds):
+            train_indices = rng.choice(
+                len(train_ds), size=max_train_rows, replace=False
+            )
+
+            train_ds = Subset(train_ds, train_indices)
+
+        # validation subset
+        if max_val_rows is not None and max_val_rows < len(val_ds):
+            val_indices = rng.choice(len(val_ds), size=max_val_rows, replace=False)
+
+            val_ds = Subset(val_ds, val_indices)
+
+        logger.info(
+            "using %d training rows | %d validation rows",
+            len(train_ds),
+            len(val_ds),
+        )
 
     batch_size = config.two_tower.batch_size
     val_batch_size = batch_size // 2
@@ -138,6 +188,8 @@ def main():
 
     selected_models = args.model
 
+    logger.info("model training begin shortly")
+
     if "retrieval" in selected_models:
         two_tower = build_two_tower_model(
             model_config=config.two_tower,
@@ -149,6 +201,14 @@ def main():
             entity_embedding_weights=entity_embedding_weights,
             entity_embedding_dim=entity_embedding_dim,
         )
+
+        total, trainable = count_parameters(two_tower)
+        logger.info(
+            "Parameters: total=%s | trainable=%s",
+            f"{total:,}",
+            f"{trainable:,}",
+        )
+
         two_tower_trainer = Trainer(
             model=two_tower,
             model_name="two_tower_retrieval",

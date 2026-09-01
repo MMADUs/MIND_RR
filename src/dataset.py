@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from pathlib import Path
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -55,7 +56,8 @@ class BehaviorDataset:
         behavior_df["positive_ids"] = parsed_impressions.map(lambda x: x[0])
         behavior_df["negative_ids"] = parsed_impressions.map(lambda x: x[1])
 
-        # both classes are required for sampled-softmax training
+        # both classes are required for sampled-softmax training, and...
+        # NOTE: remove fully padded history
         valid = (
             behavior_df["history_ids"].map(bool)
             & behavior_df["positive_ids"].map(bool)
@@ -214,7 +216,7 @@ def build_ds(
     behaviors_path: str | Path,
     max_history: int,
     num_negatives: int,
-) -> MINDDataset:
+) -> Tuple[MINDDataset, int]:
     """helper function to build dataset"""
     behavior_dataset = BehaviorDataset(news_id_to_idx, behaviors_path=behaviors_path)
     behavior_df = behavior_dataset.build_data(max_history)
@@ -224,4 +226,4 @@ def build_ds(
         behavior_df,
         max_history,
         num_negatives,
-    )
+    ), len(behavior_df)

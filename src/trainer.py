@@ -3,6 +3,8 @@
 
 import pickle
 import time
+import logging
+
 from pathlib import Path
 
 import torch
@@ -10,12 +12,20 @@ import torch.nn as nn
 
 from torch.amp import autocast, GradScaler
 from torch.optim import AdamW
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 
 from config import Config
 from src.callbacks import TrainingCallback, TrainCheckpoint, EarlyStopping
 from src.metrics import compute_ranking_metrics
 from src.utils import time_formatter, DeviceDataLoader
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+
+logger = logging.getLogger(__name__)
 
 
 def _get_amp_dtype(device):
@@ -67,7 +77,7 @@ class Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
 
-        print("Preparing training...")
+        logger.info("preparing training: %s", model_name)
 
         self.model = model.to(self.device)
 
@@ -88,6 +98,12 @@ class Trainer:
             trainable_params,
             lr=config.two_tower.lr,
             weight_decay=config.two_tower.weight_decay,
+        )
+
+        self.scheduler = CosineAnnealingLR(
+            self.optimizer,
+            T_max=config.two_tower.epochs,
+            eta_min=config.two_tower.lr * 1e-2,
         )
 
         ckpt_filename = config.ckpt_basename.format(model_name) + config.ckpt_format
@@ -129,7 +145,7 @@ class Trainer:
         return scores, labels
 
     def fit(self):
-        print("Starting training...\n")
+        logger.info("training started with %d epochs", self.config.two_tower.epochs)
 
         start_time = time.time()
 
@@ -138,6 +154,8 @@ class Trainer:
 
             if self.device.type == "cuda":
                 torch.cuda.empty_cache()
+
+            epoch_lr = self.optimizer.param_groups[0]["lr"]
 
             # train
             self.model.train()
@@ -185,6 +203,8 @@ class Trainer:
             del train_scores
             del train_labels
 
+            self.scheduler.step()
+
             # eval
             self.model.eval()
 
@@ -218,19 +238,24 @@ class Trainer:
             # logging
             epoch_time = time.time() - epoch_start
 
-            print(
-                f"Epoch {epoch}/{self.config.two_tower.epochs} - "
-                f"{time_formatter(epoch_time)} | "
-                f"train_loss={train_loss:.6f} | "
-                f"val_loss={val_loss:.6f} | "
-                f"train_AUC={train_metrics['auc']:.4f} | "
-                f"val_AUC={val_metrics['auc']:.4f} | "
-                f"train_MRR={train_metrics['mrr']:.4f} | "
-                f"val_MRR={val_metrics['mrr']:.4f} | "
-                f"train_nDCG@5={train_metrics['ndcg@5']:.4f} | "
-                f"val_nDCG@5={val_metrics['ndcg@5']:.4f} | "
-                f"train_nDCG@10={train_metrics['ndcg@10']:.4f} | "
-                f"val_nDCG@10={val_metrics['ndcg@10']:.4f}"
+            logger.info(
+                "epoch %d/%d - %s | lr=%.2e | "
+                "train_loss=%.6f | val_loss=%.6f | "
+                "train_AUC=%.4f | val_AUC=%.4f | "
+                "train_MRR=%.4f | val_MRR=%.4f | "
+                "train_nDCG@5=%.4f | val_nDCG@5=%.4f | ",
+                epoch,
+                self.config.two_tower.epochs,
+                time_formatter(epoch_time),
+                epoch_lr,
+                train_loss,
+                val_loss,
+                train_metrics["auc"],
+                val_metrics["auc"],
+                train_metrics["mrr"],
+                val_metrics["mrr"],
+                train_metrics["ndcg@5"],
+                val_metrics["ndcg@5"],
             )
 
             self.history.append(
@@ -247,6 +272,7 @@ class Trainer:
             model_dict = self.model.state_dict()
             optimizer_dict = {
                 "adam": self.optimizer.state_dict(),
+                "cosine_scheduler": self.scheduler.state_dict(),
             }
             metadata = {
                 "epoch": epoch,
@@ -258,8 +284,6 @@ class Trainer:
                 "val_mrr": val_metrics["mrr"],
                 "train_ndcg@5": train_metrics["ndcg@5"],
                 "val_ndcg@5": val_metrics["ndcg@5"],
-                "train_ndcg@10": train_metrics["ndcg@10"],
-                "val_ndcg@10": val_metrics["ndcg@10"],
             }
 
             is_stopping = self.callbacks.step(
@@ -276,9 +300,9 @@ class Trainer:
 
         end_time = time.time()
 
-        print(f"elapsed time: " f"{time_formatter(end_time - start_time)}")
+        logger.info("elapsed time: %s", time_formatter(end_time - start_time))
 
         with open(self.history_path, "wb") as f:
             pickle.dump(self.history, f)
 
-        print(f"training complete, history saved to " f"{self.history_path}")
+        logger.info("training complete | history saved to %s", self.history_path)
