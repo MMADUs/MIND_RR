@@ -49,9 +49,11 @@ def build_two_tower_model(
 
     user_encoder = UserEncoder(
         d_model=user_tower_config.d_model,
+        input_dim=news_tower_config.d_model,
         num_layers=user_tower_config.num_layers,
         num_heads=user_tower_config.num_heads,
         d_ff=user_tower_config.d_ff,
+        output_dim=news_tower_config.d_model,
         dropout=user_tower_config.dropout,
     )
 

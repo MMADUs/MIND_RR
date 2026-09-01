@@ -178,13 +178,17 @@ class UserEncoder(nn.Module):
 
     def __init__(
         self,
+        input_dim: int,
         d_model: int,
         num_layers: int,
         num_heads: int,
         d_ff: int,
+        output_dim: int,
         dropout: float = 0.1,
     ):
         super().__init__()
+
+        self.input_projection = nn.Linear(input_dim, d_model)
 
         self.layers = nn.ModuleList(
             [
@@ -193,6 +197,8 @@ class UserEncoder(nn.Module):
             ]
         )
         self.norm = nn.RMSNorm(d_model)
+
+        self.output_projection = nn.Linear(d_model, output_dim)
 
     @staticmethod
     def _build_causal_mask(valid_mask: torch.Tensor) -> torch.Tensor:
@@ -217,15 +223,18 @@ class UserEncoder(nn.Module):
 
     def forward(self, history: torch.Tensor, valid_mask: torch.Tensor) -> torch.Tensor:
         x = history
-        # x: (batch, history_len, d_model)
+        # x: (batch, history_len, news_d_model)
         # valid_mask: (batch, history_len)
+
+        x = self.input_projection(x)
+        # (batch, history_len, news_d_model) -> (batch, history_len, user_d_model)
 
         attn_mask = self._build_causal_mask(valid_mask)
         # (batch, 1, history_len, history_len)
 
         for layer in self.layers:
             x = layer(x, attn_mask)
-        # (batch, history_len, d_model)
+        # (batch, history_len, user_d_model)
 
         x = self.norm(x)
 
@@ -240,6 +249,9 @@ class UserEncoder(nn.Module):
         if empty_indices.any():
             out = out.clone()
             out[empty_indices] = 0.0
+
+        out = self.output_projection(out)
+        # (batch, history_len, user_d_model) -> (batch, history_len, news_d_model)
 
         return out
 
